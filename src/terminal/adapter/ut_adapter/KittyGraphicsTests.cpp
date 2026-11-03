@@ -213,8 +213,8 @@ namespace Microsoft::Console::VirtualTerminal
             VERIFY_IS_TRUE(_api->response.find(L"ENOSYS") != std::wstring::npos);
             SendApc(L"a=t,o=q,i=5;AAAA");
             VERIFY_IS_TRUE(_api->response.find(L"ENOSYS") != std::wstring::npos);
-            SendApc(L"a=t,f=8,s=1,v=1,i=5;AAAA");
-            VERIFY_IS_TRUE(_api->response.find(L"ENOSYS") != std::wstring::npos);
+            SendApc(L"a=t,f=7,s=1,v=1,i=5;AAAA");
+            VERIFY_IS_TRUE(_api->response.find(L"EINVAL") != std::wstring::npos);
         }
 
         TEST_METHOD(FrameChunkAppendsAndSelects)
@@ -708,6 +708,65 @@ namespace Microsoft::Console::VirtualTerminal
             VERIFY_ARE_EQUAL(2u, image->frames.size());
             SendApc(L"a=a,i=43,c=2");
             VerifyPixel(RGBQUAD{ 0, 64, 0, 255 }, image->pixels[0]);
+        }
+
+        TEST_METHOD(TransmitIndexed8ResolvesPalette)
+        {
+            // Palette indices 196 (color cube red) and 21 (color cube
+            // blue), resolved from the terminal's 256-color table.
+            SendApc(L"a=t,f=8,s=2,v=1,i=7;xBU=");
+            const auto image = _buffer->GetKittyImages().FindImage(7);
+            VERIFY_IS_NOT_NULL(image);
+            VERIFY_ARE_EQUAL(2, image->size.width);
+            VERIFY_ARE_EQUAL(1, image->size.height);
+            VerifyPixel(RGBQUAD{ 0, 0, 255, 255 }, image->pixels[0]);
+            VerifyPixel(RGBQUAD{ 255, 0, 0, 255 }, image->pixels[1]);
+        }
+
+        TEST_METHOD(TransmitIndexed16AppliesAlpha)
+        {
+            // Index 196 (color cube red) at half opacity.
+            SendApc(L"a=t,f=16,s=1,v=1,i=7;xIA=");
+            const auto image = _buffer->GetKittyImages().FindImage(7);
+            VERIFY_IS_NOT_NULL(image);
+            VerifyPixel(RGBQUAD{ 0, 0, 255, 128 }, image->pixels[0]);
+        }
+
+        TEST_METHOD(TransmitIndexed16SpecialIndices)
+        {
+            // Indices 232 and 244 are grayscale ramp shades, 248 the
+            // default background (the dark black table entry); a f=16
+            // pixel carries its alpha after the index.
+            SendApc(L"a=t,f=16,s=3,v=1,i=7;6P/0yPj/");
+            const auto image = _buffer->GetKittyImages().FindImage(7);
+            VERIFY_IS_NOT_NULL(image);
+            VerifyPixel(RGBQUAD{ 8, 8, 8, 255 }, image->pixels[0]);
+            VerifyPixel(RGBQUAD{ 128, 128, 128, 200 }, image->pixels[1]);
+            VerifyPixel(RGBQUAD{ 12, 12, 12, 255 }, image->pixels[2]);
+        }
+
+        TEST_METHOD(TransmitIndexedSizeMismatchRejected)
+        {
+            // One pixel of f=8 data, two bytes sent.
+            SendApc(L"a=t,f=8,s=1,v=1,i=7;/wAA");
+            VERIFY_IS_TRUE(_api->response.find(L"EINVAL") != std::wstring::npos);
+            VERIFY_IS_NULL(_buffer->GetKittyImages().FindImage(7));
+        }
+
+        TEST_METHOD(IndexedQueryAnswersOk)
+        {
+            // The spec's support probe for the indexed formats.
+            SendApc(L"a=q,f=8,s=1,v=1,i=5;AA==");
+            VERIFY_ARE_EQUAL(L"\x1b_Gi=5;OK\x1b\\", _api->response);
+        }
+
+        TEST_METHOD(FramesOnIndexedImageRejected)
+        {
+            SendApc(L"a=t,f=8,s=1,v=1,i=7;eA==");
+            VERIFY_IS_NOT_NULL(_buffer->GetKittyImages().FindImage(7));
+            SendApc(L"a=f,i=7,r=2;eA==");
+            VERIFY_IS_TRUE(_api->response.find(L"EINVAL") != std::wstring::npos);
+            VERIFY_ARE_EQUAL(0u, _buffer->GetKittyImages().FindImage(7)->frames.size());
         }
 
         TEST_METHOD(QueryActionDetectsSupport)

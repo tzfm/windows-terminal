@@ -11,18 +11,19 @@ Abstract:
   the active buffer's KittyImages store. Modeled on SixelParser: driven by
   a per-character handler returned to the state machine, with the sequence
   ended by a synthetic ESC.
-- Supported: transmission of RGB, RGBA and PNG data over the direct
-  medium (t=d), chunked transmission (m=1/m=0), client and terminal
-  assigned image ids (i=/I=), payload sub-rectangle bounds (S=/O=), direct
-  placements with source-rectangle cropping and cell-rectangle scaling
-  (x,y,w,h,c,r,X,Y,z), cursor movement policies (C=), Unicode placeholder
-  virtual placements (U=1), deletion (d=), quiet responses (q=), query
-  actions (a=q) including feature queries (e=), zlib compression (o=z),
-  animation frames (a=f with b= and z=), frame composition (a=c) and
-  client-driven animation control (a=a with c=, r=, z=, s= and v=).
+- Supported: transmission of RGB, RGBA, indexed (f=8/f=16, resolved
+  against the terminal color table at transmit time) and PNG data over
+  the direct medium (t=d), chunked transmission (m=1/m=0), client and
+  terminal assigned image ids (i=/I=), payload sub-rectangle bounds
+  (S=/O=), direct placements with source-rectangle cropping and
+  cell-rectangle scaling (x,y,w,h,c,r,X,Y,z), cursor movement policies
+  (C=), Unicode placeholder virtual placements (U=1), deletion (d=),
+  quiet responses (q=), query actions (a=q) including feature queries
+  (e=), zlib compression (o=z), animation frames (a=f with b= and z=),
+  frame composition (a=c) and client-driven animation control (a=a with
+  c=, r=, z=, s= and v=). Animation frames require an RGB or RGBA image.
 - Not supported, answered with ENOSYS when asked: file and shared memory
-  transmission (t=f/t=s), indexed color formats (f=8, f=16), and relative
-  placements (P=/Q=/H=/V=).
+  transmission (t=f/t=s) and relative placements (P=/Q=/H=/V=).
 --*/
 
 #pragma once
@@ -114,6 +115,9 @@ namespace Microsoft::Console::VirtualTerminal
         void _redrawImagePlacements(uint32_t imageId);
 
         void _respond(bool ok, const wchar_t* message = L"OK") const;
+        // Resolves an f=8/f=16 palette index against the terminal color
+        // table, with the spec's fallback colors for the special indices.
+        RGBQUAD _palettePixel(uint8_t index, uint8_t alpha) const noexcept;
         std::wstring _responsePrefix() const;
         bool _quietSuppress(bool ok) const noexcept;
         const wchar_t* _validateTransmit();

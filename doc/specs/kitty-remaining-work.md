@@ -58,8 +58,15 @@ bound runs past the payload. Handles a=t (raw + PNG), a=f frame data
 and a=q validation. Tests: offset blit, size trim, both bounds, zlib
 PNG with right/wrong S, frame offset.
 
-## 3. Indexed formats f=8 / f=16 (last)
-Palette via the a=1 command first. Low value.
+## 3. Indexed formats f=8 / f=16 (DONE)
+No a=1 palette command exists in the spec (the old note here was wrong):
+the palette IS the terminal color table. f=8 is one palette index per
+pixel, opaque; f=16 adds an alpha byte. 0-247 map to the SGR 256 table
+(live from RenderSettings, so OSC 4/10/11 changes apply), 248/249 the
+default background/foreground aliases, 250-253 selection/cursor colors
+with the spec's default fg/bg fallbacks when unset, 254/255 default
+foreground. Animation frames and composition stay RGB/RGBA only, per
+spec. a=q with f=8 answers OK (the spec's support probe).
 
 ## 4. File / stdin transmission t=f / t=s
 Out of scope (security, no client needs it).

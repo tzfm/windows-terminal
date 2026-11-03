@@ -71,6 +71,26 @@ namespace
         return nullptr;
     }
 
+    // Bytes per pixel of a directly transmitted pixel format, 0 when the
+    // format is none of them. f=8 carries one palette index per pixel,
+    // f=16 an index and an alpha.
+    constexpr size_t DirectFormatBytes(const uint32_t format) noexcept
+    {
+        switch (format)
+        {
+        case 8:
+            return 1;
+        case 16:
+            return 2;
+        case 24:
+            return 3;
+        case 32:
+            return 4;
+        default:
+            return 0;
+        }
+    }
+
     std::optional<std::vector<uint8_t>> Base64Decode(const std::string_view text)
     {
         static constexpr auto invalid = static_cast<uint8_t>(0xFF);
@@ -485,6 +505,58 @@ KittyImages& KittyGraphicsParser::_images() const
     return page.Buffer().GetKittyImages();
 }
 
+RGBQUAD KittyGraphicsParser::_palettePixel(const uint8_t index, const uint8_t alpha) const noexcept
+{
+    const auto& settings = _dispatcher._renderSettings;
+    const auto entry = [&](const size_t tableIndex) {
+        const auto color = settings.GetColorTableEntry(tableIndex);
+        return RGBQUAD{ GetBValue(color), GetGValue(color), GetRValue(color), alpha };
+    };
+    if (index <= 247)
+    {
+        // The same colors as the SGR 256 color table: the ANSI colors,
+        // the color cube and the first sixteen shades of the grayscale
+        // ramp, all resolved live from the current terminal colors.
+        return entry(index);
+    }
+    const auto foreground = settings.GetColorAliasIndex(ColorAlias::DefaultForeground);
+    const auto background = settings.GetColorAliasIndex(ColorAlias::DefaultBackground);
+    switch (index)
+    {
+    case 248:
+        return entry(background);
+    case 249:
+        return entry(foreground);
+    case 250:
+        // Selection background; the spec's fallback when the setting
+        // takes it from the cell it is drawn over is the default
+        // foreground.
+        if (settings.GetColorTableEntry(TextColor::SELECTION_BACKGROUND) != INVALID_COLOR)
+        {
+            return entry(TextColor::SELECTION_BACKGROUND);
+        }
+        return entry(foreground);
+    case 251:
+        // Selection foreground, default background in the same fallback.
+        return entry(background);
+    case 252:
+        // Cursor color, default foreground when the terminal leaves it
+        // to the cell.
+        if (settings.GetColorTableEntry(TextColor::CURSOR_COLOR) != INVALID_COLOR)
+        {
+            return entry(TextColor::CURSOR_COLOR);
+        }
+        return entry(foreground);
+    case 253:
+        // Cursor text color, default background in the same fallback.
+        return entry(background);
+    default:
+        // 254 (URL highlight) has no source this deep in the stack and
+        // 255 is reserved; both fall back to the default foreground.
+        return entry(foreground);
+    }
+}
+
 void KittyGraphicsParser::_applyCommand()
 {
     // Any other command while a chunked transmission is in flight abandons
@@ -615,13 +687,9 @@ const wchar_t* KittyGraphicsParser::_validateTransmit()
         return L"ENOSYS:only zlib compression is supported";
     }
     const auto format = _cmd.format.value_or(32);
-    if (format == 24 || format == 32 || format == 100)
+    if (format == 8 || format == 16 || format == 24 || format == 32 || format == 100)
     {
         return nullptr;
-    }
-    if (format == 8 || format == 16)
-    {
-        return L"ENOSYS:indexed color formats are not supported";
     }
     return L"EINVAL:unknown format";
 }
@@ -707,7 +775,7 @@ void KittyGraphicsParser::_finishTransmission()
         return static_cast<size_t>(std::min<uint64_t>(std::max<uint64_t>(declared, expected), KittyImages::MaxTotalImageBytes));
     };
 
-    if (format == 24 || format == 32)
+    if (format != 100)
     {
         til::CoordType width = 0;
         til::CoordType height = 0;
@@ -728,7 +796,7 @@ void KittyGraphicsParser::_finishTransmission()
             _respond(false, L"EINVAL:image too large");
             return;
         }
-        const auto bytesPerPixel = format == 32 ? 4 : 3;
+        const auto bytesPerPixel = DirectFormatBytes(format);
         const auto expected = static_cast<size_t>(width) * height * bytesPerPixel;
         if (cmd.compressed == L'z')
         {
@@ -757,13 +825,27 @@ void KittyGraphicsParser::_finishTransmission()
         size = { static_cast<til::CoordType>(width), static_cast<til::CoordType>(height) };
         pixels.resize(static_cast<size_t>(width) * height);
         const auto* src = bytes;
-        for (size_t i = 0; i < pixels.size(); ++i)
+        if (format == 8 || format == 16)
         {
-            const auto r = src[i * bytesPerPixel + 0];
-            const auto g = src[i * bytesPerPixel + 1];
-            const auto b = src[i * bytesPerPixel + 2];
-            const auto a = bytesPerPixel == 4 ? src[i * bytesPerPixel + 3] : uint8_t{ 255 };
-            pixels[i] = RGBQUAD{ b, g, r, a };
+            // Indexed data: every pixel is a palette index, f=16 adds an
+            // alpha byte after it.
+            for (size_t i = 0; i < pixels.size(); ++i)
+            {
+                const auto index = src[i * bytesPerPixel];
+                const auto alpha = format == 16 ? src[i * bytesPerPixel + 1] : uint8_t{ 255 };
+                pixels[i] = _palettePixel(index, alpha);
+            }
+        }
+        else
+        {
+            for (size_t i = 0; i < pixels.size(); ++i)
+            {
+                const auto r = src[i * bytesPerPixel + 0];
+                const auto g = src[i * bytesPerPixel + 1];
+                const auto b = src[i * bytesPerPixel + 2];
+                const auto a = bytesPerPixel == 4 ? src[i * bytesPerPixel + 3] : uint8_t{ 255 };
+                pixels[i] = RGBQUAD{ b, g, r, a };
+            }
         }
     }
     else // PNG
@@ -1044,9 +1126,9 @@ void KittyGraphicsParser::_query()
     {
         const auto width = static_cast<til::CoordType>(_cmd.dataWidth.value_or(0));
         const auto height = static_cast<til::CoordType>(_cmd.dataHeight.value_or(0));
-        const auto bytesPerPixel = format == 32 ? 4 : 3;
+        const auto bytesPerPixel = DirectFormatBytes(format);
         const auto decoded = Base64Decode(_cmd.payloadBase64);
-        if (width == 0 || height == 0 || !decoded)
+        if (width == 0 || height == 0 || !decoded || bytesPerPixel == 0)
         {
             _respond(false, L"EINVAL:payload size does not match dimensions");
             return;
@@ -1365,11 +1447,11 @@ void KittyGraphicsParser::_frame()
         return;
     }
     const auto format = cmd.format ? *cmd.format : image->format;
-    if (format == 100)
+    if (image->format != 24 && image->format != 32)
     {
-        // PNG images have no raw frame data; animation frames arrive as
-        // raw pixels over f=24/f=32 transmissions.
-        _respond(false, L"EINVAL:frames require a raw pixel format");
+        // The spec keeps animation and frame composition to RGB and RGBA
+        // images; PNG and indexed images carry no raw frame data.
+        _respond(false, L"EINVAL:frames require an RGB or RGBA image");
         return;
     }
 

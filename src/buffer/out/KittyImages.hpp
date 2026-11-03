@@ -50,7 +50,7 @@ public:
         uint32_t number = 0; // the client supplied I= key, 0 if none
         til::size size; // in pixels
         std::vector<RGBQUAD> pixels; // row-major, BGRA, straight alpha; the currently displayed frame
-        uint32_t format = 32; // 24, 32 or 100, kept for animation frame data
+        uint32_t format = 32; // 8, 16, 24, 32 or 100, kept for animation frame data
         char compressed = 0; // 'z' when the payload arrived zlib compressed
         uint32_t currentFrame = 1; // 1-based frame number shown in pixels
         uint32_t animState = 0; // last s= value of a=a, kept for the client
