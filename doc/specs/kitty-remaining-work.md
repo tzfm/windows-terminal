@@ -49,11 +49,14 @@ Design:
 
 ## 1. Terminal-driven animation playback (DONE, c67afb461)
 
-## 2. Payload sub-rectangle keys S / O
-S = offset into the transmitted data, O = size. In _finishTransmission,
-slice bytes by S before the expected size check; expected = O.w*O.h*bpp
-(spec S/O are pixel counts, see kitty docs "size and offset"). Add to
-Command, u32, CheckedCoord vs image dims. Tests: offset blit.
+## 2. Payload sub-rectangle keys S / O (DONE)
+Spec: S = size in bytes of image data inside the payload, O = offset in
+bytes where it starts. Applied after decompression (clients deflate the
+whole wrapped buffer). Inflate caps at O+S so bombs stay bounded; S is
+also the spec-required size of a zlib-wrapped PNG. EINVAL when either
+bound runs past the payload. Handles a=t (raw + PNG), a=f frame data
+and a=q validation. Tests: offset blit, size trim, both bounds, zlib
+PNG with right/wrong S, frame offset.
 
 ## 3. Indexed formats f=8 / f=16 (last)
 Palette via the a=1 command first. Low value.

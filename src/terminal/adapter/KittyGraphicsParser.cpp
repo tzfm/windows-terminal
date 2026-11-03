@@ -45,6 +45,32 @@ namespace
         return true;
     }
 
+    // Slices the image data out of a (decompressed) payload: O bytes of
+    // wrapping precede it and S bytes of data follow. Both bounds are
+    // client u32 keys; anything past the payload is EINVAL.
+    const wchar_t* ApplyDataBounds(const std::optional<uint32_t>& dataSize,
+                                   const std::optional<uint32_t>& dataOffset,
+                                   const uint8_t*& bytes,
+                                   size_t& byteCount) noexcept
+    {
+        const auto offset = dataOffset.value_or(0);
+        if (offset > byteCount)
+        {
+            return L"EINVAL:offset beyond the payload";
+        }
+        bytes += offset;
+        byteCount -= offset;
+        if (dataSize)
+        {
+            if (*dataSize > byteCount)
+            {
+                return L"EINVAL:data size beyond the payload";
+            }
+            byteCount = *dataSize;
+        }
+        return nullptr;
+    }
+
     std::optional<std::vector<uint8_t>> Base64Decode(const std::string_view text)
     {
         static constexpr auto invalid = static_cast<uint8_t>(0xFF);
@@ -441,8 +467,14 @@ bool KittyGraphicsParser::_foldKeyValue()
     case L'N':
         _cmd.usageHints = u32;
         break;
+    case L'S':
+        _cmd.dataSize = u32;
+        break;
+    case L'O':
+        _cmd.dataOffset = u32;
+        break;
     default:
-        break; // S, O, H, V belong to unsupported features
+        break; // H, V belong to unsupported features
     }
     return true;
 }
@@ -665,19 +697,15 @@ void KittyGraphicsParser::_finishTransmission()
     const uint8_t* bytes = decoded->data();
     size_t byteCount = decoded->size();
     std::vector<uint8_t> inflated;
-    if (format == 100 && cmd.compressed == L'z')
-    {
-        // A PNG payload has no declared size; a decompressed one may not
-        // exceed the image memory budget.
-        inflated = Zlib::Inflate(std::span{ bytes, byteCount }, KittyImages::MaxTotalImageBytes).value_or(std::vector<uint8_t>{});
-        if (inflated.empty())
-        {
-            _respond(false, L"EINVAL:failed to decompress payload");
-            return;
-        }
-        bytes = inflated.data();
-        byteCount = inflated.size();
-    }
+    // The wrapped length a compressed payload may inflate to: the image
+    // data plus whatever O bytes of wrapping precede it. Without S/O the
+    // client sends (or the format declares) the data bare, so the bare
+    // expected size is the cap.
+    const auto wrappedBound = [&](uint64_t expected) {
+        const auto declared = static_cast<uint64_t>(cmd.dataOffset.value_or(0)) +
+                              (cmd.dataSize ? static_cast<uint64_t>(*cmd.dataSize) : expected);
+        return static_cast<size_t>(std::min<uint64_t>(std::max<uint64_t>(declared, expected), KittyImages::MaxTotalImageBytes));
+    };
 
     if (format == 24 || format == 32)
     {
@@ -704,10 +732,10 @@ void KittyGraphicsParser::_finishTransmission()
         const auto expected = static_cast<size_t>(width) * height * bytesPerPixel;
         if (cmd.compressed == L'z')
         {
-            // A raw payload can only ever inflate to its declared size;
-            // capping the decompression there stops zlib bombs short of
-            // the budget.
-            inflated = Zlib::Inflate(std::span{ bytes, byteCount }, expected).value_or(std::vector<uint8_t>{});
+            // A raw payload can only ever inflate to the wrapped length
+            // of its data; capping the decompression there stops zlib
+            // bombs short of the budget.
+            inflated = Zlib::Inflate(std::span{ bytes, byteCount }, wrappedBound(expected)).value_or(std::vector<uint8_t>{});
             if (inflated.empty())
             {
                 _respond(false, L"EINVAL:failed to decompress payload");
@@ -715,6 +743,11 @@ void KittyGraphicsParser::_finishTransmission()
             }
             bytes = inflated.data();
             byteCount = inflated.size();
+        }
+        if (const auto error = ApplyDataBounds(cmd.dataSize, cmd.dataOffset, bytes, byteCount))
+        {
+            _respond(false, error);
+            return;
         }
         if (byteCount != expected)
         {
@@ -735,6 +768,27 @@ void KittyGraphicsParser::_finishTransmission()
     }
     else // PNG
     {
+        if (cmd.compressed == L'z')
+        {
+            // A PNG payload declares no size of its own. S is how many
+            // decompressed bytes of PNG to read, and the spec asks for it
+            // exactly because zlib cannot say; without it the image
+            // memory budget stays the cap.
+            const auto cap = cmd.dataSize ? wrappedBound(0) : static_cast<size_t>(KittyImages::MaxTotalImageBytes);
+            inflated = Zlib::Inflate(std::span{ bytes, byteCount }, cap).value_or(std::vector<uint8_t>{});
+            if (inflated.empty())
+            {
+                _respond(false, L"EINVAL:failed to decompress payload");
+                return;
+            }
+            bytes = inflated.data();
+            byteCount = inflated.size();
+        }
+        if (const auto error = ApplyDataBounds(cmd.dataSize, cmd.dataOffset, bytes, byteCount))
+        {
+            _respond(false, error);
+            return;
+        }
         if (byteCount == 0 || !DecodePng(std::vector<uint8_t>(bytes, bytes + byteCount), size, pixels))
         {
             _respond(false, L"EINVAL:failed to decode PNG payload");
@@ -992,7 +1046,19 @@ void KittyGraphicsParser::_query()
         const auto height = static_cast<til::CoordType>(_cmd.dataHeight.value_or(0));
         const auto bytesPerPixel = format == 32 ? 4 : 3;
         const auto decoded = Base64Decode(_cmd.payloadBase64);
-        if (width == 0 || height == 0 || !decoded || decoded->size() != static_cast<size_t>(width) * height * bytesPerPixel)
+        if (width == 0 || height == 0 || !decoded)
+        {
+            _respond(false, L"EINVAL:payload size does not match dimensions");
+            return;
+        }
+        const uint8_t* bytes = decoded->data();
+        size_t byteCount = decoded->size();
+        if (const auto error = ApplyDataBounds(_cmd.dataSize, _cmd.dataOffset, bytes, byteCount))
+        {
+            _respond(false, error);
+            return;
+        }
+        if (byteCount != static_cast<size_t>(width) * height * bytesPerPixel)
         {
             _respond(false, L"EINVAL:payload size does not match dimensions");
             return;
@@ -1340,11 +1406,16 @@ void KittyGraphicsParser::_frame()
     const uint8_t* bytes = decoded->data();
     size_t byteCount = decoded->size();
     std::vector<uint8_t> inflated;
+    const auto bytesPerPixel = format == 24 ? 3 : 4;
     if (cmd.compressed == L'z')
     {
-        // A frame payload can only ever inflate to its declared size.
-        const auto expected = static_cast<size_t>(rectWidth) * rectHeight * (format == 24 ? 3 : 4);
-        inflated = Zlib::Inflate(std::span{ bytes, byteCount }, expected).value_or(std::vector<uint8_t>{});
+        // A frame payload can only ever inflate to the wrapped length of
+        // its declared rectangle; S/O may wrap the data inside it.
+        const auto expected = static_cast<uint64_t>(rectWidth) * rectHeight * bytesPerPixel;
+        const auto declared = static_cast<uint64_t>(cmd.dataOffset.value_or(0)) +
+                              (cmd.dataSize ? static_cast<uint64_t>(*cmd.dataSize) : expected);
+        const auto cap = static_cast<size_t>(std::min<uint64_t>(std::max<uint64_t>(declared, expected), KittyImages::MaxTotalImageBytes));
+        inflated = Zlib::Inflate(std::span{ bytes, byteCount }, cap).value_or(std::vector<uint8_t>{});
         if (inflated.empty())
         {
             _respond(false, L"EINVAL:failed to decompress payload");
@@ -1353,8 +1424,12 @@ void KittyGraphicsParser::_frame()
         bytes = inflated.data();
         byteCount = inflated.size();
     }
+    if (const auto error = ApplyDataBounds(cmd.dataSize, cmd.dataOffset, bytes, byteCount))
+    {
+        _respond(false, error);
+        return;
+    }
 
-    const auto bytesPerPixel = format == 24 ? 3 : 4;
     if (byteCount != static_cast<size_t>(rectWidth) * rectHeight * bytesPerPixel)
     {
         _respond(false, L"EINVAL:payload size does not match the rectangle");

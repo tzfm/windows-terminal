@@ -13,18 +13,16 @@ Abstract:
   ended by a synthetic ESC.
 - Supported: transmission of RGB, RGBA and PNG data over the direct
   medium (t=d), chunked transmission (m=1/m=0), client and terminal
-  assigned image ids (i=/I=), direct placements with source-rectangle
-  cropping and cell-rectangle scaling (x,y,w,h,c,r,X,Y,z), cursor movement
-  policies (C=), Unicode placeholder virtual placements (U=1), deletion
-  (d=), quiet responses (q=), query actions (a=q) including feature
-  queries (e=), zlib compression (o=z), animation frames (a=f with b= and
-  z=), frame composition (a=c) and client-driven animation control (a=a
-  with c=, r=, z=, s= and v=).
+  assigned image ids (i=/I=), payload sub-rectangle bounds (S=/O=), direct
+  placements with source-rectangle cropping and cell-rectangle scaling
+  (x,y,w,h,c,r,X,Y,z), cursor movement policies (C=), Unicode placeholder
+  virtual placements (U=1), deletion (d=), quiet responses (q=), query
+  actions (a=q) including feature queries (e=), zlib compression (o=z),
+  animation frames (a=f with b= and z=), frame composition (a=c) and
+  client-driven animation control (a=a with c=, r=, z=, s= and v=).
 - Not supported, answered with ENOSYS when asked: file and shared memory
-  transmission (t=f/t/s), indexed color formats (f=8, f=16), and relative
-  placements (P=/Q=/H=/V=). Terminal-driven animation playback (the
-  timing of s=2/s=3) is not implemented; frames are stored and can be
-  selected by the client.
+  transmission (t=f/t=s), indexed color formats (f=8, f=16), and relative
+  placements (P=/Q=/H=/V=).
 --*/
 
 #pragma once
@@ -89,6 +87,8 @@ namespace Microsoft::Console::VirtualTerminal
             std::optional<uint32_t> unicodePlacement; // U=
             std::optional<uint32_t> usageHints; // N=
             std::optional<uint32_t> frameNumber; // b=, the frame number of a=f data
+            std::optional<uint32_t> dataSize; // S=, bytes of image data in the payload
+            std::optional<uint32_t> dataOffset; // O=, bytes of wrapping before the image data
             std::string payloadBase64;
         };
 

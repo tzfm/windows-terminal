@@ -636,6 +636,80 @@ namespace Microsoft::Console::VirtualTerminal
             VERIFY_IS_NULL(_buffer->GetKittyImages().FindImage(7));
         }
 
+        TEST_METHOD(OffsetKeySkipsWrappingBytes)
+        {
+            // Four bytes of wrapping precede one red RGB pixel.
+            SendApc(L"a=t,f=24,s=1,v=1,i=7,O=4;AQIDBP8AAA==");
+            const auto image = _buffer->GetKittyImages().FindImage(7);
+            VERIFY_IS_NOT_NULL(image);
+            VerifyPixel(RGBQUAD{ 0, 0, 255, 255 }, image->pixels[0]);
+        }
+
+        TEST_METHOD(SizeKeyBoundsDataBytes)
+        {
+            // One red RGB pixel followed by two junk bytes.
+            SendApc(L"a=t,f=24,s=1,v=1,i=7,S=3;/wAA3q0=");
+            const auto image = _buffer->GetKittyImages().FindImage(7);
+            VERIFY_IS_NOT_NULL(image);
+            VerifyPixel(RGBQUAD{ 0, 0, 255, 255 }, image->pixels[0]);
+        }
+
+        TEST_METHOD(OffsetAndSizeSliceThePayload)
+        {
+            // Two wrapping bytes, a green pixel, two junk bytes.
+            SendApc(L"a=t,f=24,s=1,v=1,i=7,O=2,S=3;AP8AQADerQ==");
+            const auto image = _buffer->GetKittyImages().FindImage(7);
+            VERIFY_IS_NOT_NULL(image);
+            VerifyPixel(RGBQUAD{ 0, 64, 0, 255 }, image->pixels[0]);
+        }
+
+        TEST_METHOD(OffsetBeyondPayloadRejected)
+        {
+            SendApc(L"a=t,f=24,s=1,v=1,i=7,O=99;/wAA");
+            VERIFY_IS_TRUE(_api->response.find(L"EINVAL") != std::wstring::npos);
+            VERIFY_IS_NULL(_buffer->GetKittyImages().FindImage(7));
+        }
+
+        TEST_METHOD(SizeBeyondPayloadRejected)
+        {
+            SendApc(L"a=t,f=24,s=1,v=1,i=7,S=99;/wAA");
+            VERIFY_IS_TRUE(_api->response.find(L"EINVAL") != std::wstring::npos);
+            VERIFY_IS_NULL(_buffer->GetKittyImages().FindImage(7));
+        }
+
+        TEST_METHOD(CompressedPngWithSizeKeyDecodes)
+        {
+            // The 3x2 fixture PNG, deflated. S names the decompressed
+            // size, as the spec asks for when PNG data is compressed.
+            SendApc(L"a=t,f=100,i=9,o=z,S=137;eJzrDPBz5+WS4mJgYOD19HAJYmBgYGZgYGDiYGNgYJhbkibFwMDAWBzk7sSw7pzMSwYGBpZ0R19HBoaN/dx/ElkZGBg4CzwiixkY+A6DMOPx/BUpDAwMcp4ujiES4ck/zh/4IM8j+e9/+o/////X6wnuZGNboMCwoJd7k+VHoUsMDAwMnq5+LuucEpoAcxcm/g==");
+            const auto image = _buffer->GetKittyImages().FindImage(9);
+            VERIFY_IS_NOT_NULL(image);
+            VERIFY_ARE_EQUAL(3, image->size.width);
+            VERIFY_ARE_EQUAL(2, image->size.height);
+            VerifyPixel(RGBQUAD{ 0, 0, 255, 255 }, image->pixels[0]);
+        }
+
+        TEST_METHOD(CompressedPngWithWrongSizeKeyRejected)
+        {
+            // S falls one byte short of the real decompressed size, so
+            // the PNG is cut in half before decoding.
+            SendApc(L"a=t,f=100,i=9,o=z,S=136;eJzrDPBz5+WS4mJgYOD19HAJYmBgYGZgYGDiYGNgYJhbkibFwMDAWBzk7sSw7pzMSwYGBpZ0R19HBoaN/dx/ElkZGBg4CzwiixkY+A6DMOPx/BUpDAwMcp4ujiES4ck/zh/4IM8j+e9/+o/////X6wnuZGNboMCwoJd7k+VHoUsMDAwMnq5+LuucEpoAcxcm/g==");
+            VERIFY_IS_TRUE(_api->response.find(L"EINVAL") != std::wstring::npos);
+            VERIFY_IS_NULL(_buffer->GetKittyImages().FindImage(9));
+        }
+
+        TEST_METHOD(FrameOffsetKeySkipsWrappingBytes)
+        {
+            // Root: 1x1 red. Frame 2: two wrapping bytes, a green pixel.
+            SendApc(L"a=t,f=24,s=1,v=1,i=43;/wAA");
+            SendApc(L"a=f,i=43,O=2;BwkAQAA=");
+            const auto image = _buffer->GetKittyImages().FindImage(43);
+            VERIFY_IS_NOT_NULL(image);
+            VERIFY_ARE_EQUAL(2u, image->frames.size());
+            SendApc(L"a=a,i=43,c=2");
+            VerifyPixel(RGBQUAD{ 0, 64, 0, 255 }, image->pixels[0]);
+        }
+
         TEST_METHOD(QueryActionDetectsSupport)
         {
             SendApc(L"i=31,s=1,v=1,a=q,t=d,f=24;AAAA");
