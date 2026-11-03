@@ -372,7 +372,90 @@ bool KittyImages::SetAnimationState(const uint32_t imageId, const uint32_t state
     }
     image->animState = state;
     image->loops = loops;
+    // Stopping resets the loop bookkeeping; a later s=2/3 starts from the
+    // currently displayed frame with a fresh clock.
+    image->animNextMs = 0;
+    image->loopsDone = 0;
+    if (state == 1)
+    {
+        // The spec: a stopped animation shows its first frame.
+        return SelectFrame(imageId, 1);
+    }
     return true;
+}
+
+bool KittyImages::HasRunningAnimations() const noexcept
+{
+    for (const auto& image : _images)
+    {
+        if (image.frames.size() >= 2 && (image.animState == 2 || image.animState == 3))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool KittyImages::TickAnimations(const uint64_t nowMs) noexcept
+{
+    // The gap of a frame is the delay after it; a missing or zero gap
+    // falls back to the spec's 40 ms default, and never below 1 ms so
+    // the loop below cannot spin on a zero delta.
+    constexpr uint32_t defaultGapMs = 40;
+    const auto gapAfter = [](const Image& image) {
+        const auto gap = image.currentFrame <= image.frames.size() ? image.frames[image.currentFrame - 1].gap : 0;
+        return static_cast<uint64_t>(std::max<int32_t>(gap > 0 ? gap : defaultGapMs, 1));
+    };
+
+    auto changed = false;
+    for (auto& image : _images)
+    {
+        if (image.frames.size() < 2 || (image.animState != 2 && image.animState != 3))
+        {
+            continue;
+        }
+        if (image.animNextMs == 0)
+        {
+            // First tick after a (re)start arms the clock.
+            image.animNextMs = nowMs + gapAfter(image);
+            continue;
+        }
+        if (nowMs >= image.animNextMs)
+        {
+            // One advance per call: the render loop ticks at frame rate,
+            // so a due animation steps a single frame and re-arms.
+            const auto next = static_cast<uint32_t>(image.currentFrame % image.frames.size() + 1);
+            if (next == 1)
+            {
+                // One full pass finished. v=1 loops forever; any other
+                // count plays v-1 extra passes and then stops.
+                ++image.loopsDone;
+                const auto loopsWanted = image.loops <= 1 ? 0 : image.loops - 1;
+                if (loopsWanted != 0 && image.loopsDone > loopsWanted)
+                {
+                    image.animState = 1;
+                    image.animNextMs = 0;
+                    image.loopsDone = 0;
+                    SelectFrame(image.id, 1);
+                    changed = true;
+                    continue;
+                }
+            }
+            image.currentFrame = next;
+            image.pixels = image.frames[next - 1].pixels;
+            image.gen = _nextImageGen++;
+            // The next transition waits out the gap of the frame now on
+            // screen. Re-arm from now, not from the deadline, so a late
+            // tick accumulates no debt.
+            image.animNextMs = nowMs + gapAfter(image);
+            changed = true;
+        }
+    }
+    if (changed)
+    {
+        _Bump();
+    }
+    return changed;
 }
 
 KittyImages::Placement* KittyImages::FindPlacement(const uint32_t imageId, const uint32_t placementId) noexcept

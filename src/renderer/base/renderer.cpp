@@ -431,6 +431,26 @@ try
         // intentional call to NotifyPaintFrame(), it triggers a redraw.
         _redraw.store(false, std::memory_order_relaxed);
 
+        // Kitty graphics animations advance on their own clock, driven from
+        // the unbiased interrupt time the timers above use (100 ns units).
+        // A changed frame repaints now, and a still-running animation keeps
+        // the render loop awake until its last frame lands.
+        {
+            ULONGLONG unbiased;
+            QueryUnbiasedInterruptTime(&unbiased);
+            const auto ms = static_cast<uint64_t>(unbiased / 10000);
+            auto& kitty = _pData->GetTextBuffer().GetKittyImages();
+            const auto advanced = kitty.TickAnimations(ms);
+            if (advanced || kitty.HasRunningAnimations())
+            {
+                if (advanced)
+                {
+                    TriggerRedrawAll();
+                }
+                _redraw.store(true, std::memory_order_relaxed);
+            }
+        }
+
         // NOTE: _CheckViewportAndScroll() updates _viewport which is used by all other functions.
         _CheckViewportAndScroll();
 

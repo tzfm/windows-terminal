@@ -53,6 +53,8 @@ public:
         uint32_t currentFrame = 1; // 1-based frame number shown in pixels
         uint32_t animState = 0; // last s= value of a=a, kept for the client
         uint32_t loops = 0; // last v= value of a=a, kept for the client
+        uint64_t animNextMs = 0; // when the running animation next advances
+        uint32_t loopsDone = 0; // wraps finished since the animation started
         // Root frame first (a copy of the pixels as transmitted), the extra
         // animation frames after it; frames[k] is frame number k + 1.
         std::vector<Frame> frames;
@@ -125,6 +127,14 @@ public:
     // Records the last animation-control state keys. Returns false on an
     // unknown image.
     bool SetAnimationState(uint32_t imageId, uint32_t state, uint32_t loops);
+    // Advances every running animation to whatever frame `nowMs` says.
+    // Returns true when any displayed frame changed, so the caller can
+    // keep repainting while animations run. nowMs comes from a monotonic
+    // millisecond clock owned by the caller.
+    bool TickAnimations(uint64_t nowMs) noexcept;
+    // True while any image has a running animation (a=a with s=2/3), so
+    // the renderer knows to stay awake between frame gaps.
+    bool HasRunningAnimations() const noexcept;
     // Drops an image's animation frames; the root image data remains.
     bool DeleteFrames(uint32_t imageId);
     // All stored images, in arrival order.

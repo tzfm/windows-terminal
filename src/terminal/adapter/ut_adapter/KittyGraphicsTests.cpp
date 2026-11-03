@@ -301,6 +301,68 @@ namespace Microsoft::Console::VirtualTerminal
             VERIFY_ARE_EQUAL(5u, image->loops);
         }
 
+        TEST_METHOD(TerminalDrivenPlaybackAdvancesByGaps)
+        {
+            // Root: opaque red. Frame 2: opaque blue, gap 100ms.
+            SendApc(L"a=t,f=24,s=1,v=1,i=30,q=2;/wAA");
+            SendApc(L"a=f,i=30,r=2,z=100;AAD/");
+            auto& images = _buffer->GetKittyImages();
+
+            // Not running: ticks change nothing.
+            VERIFY_IS_FALSE(images.TickAnimations(1000));
+            VERIFY_ARE_EQUAL(1u, images.FindImage(30)->currentFrame);
+
+            // s=3 starts it; the first tick only arms the clock. The root
+            // frame carries no gap, so the 40 ms default applies, and frame
+            // 2 then waits its own 100 ms.
+            SendApc(L"a=a,i=30,s=3,v=1,q=2");
+            VERIFY_IS_FALSE(images.TickAnimations(1000));
+            VERIFY_IS_FALSE(images.TickAnimations(1030));
+            VERIFY_IS_TRUE(images.TickAnimations(1040));
+            VERIFY_ARE_EQUAL(2u, images.FindImage(30)->currentFrame);
+            VERIFY_IS_FALSE(images.TickAnimations(1139));
+            VERIFY_IS_TRUE(images.TickAnimations(1140));
+            VERIFY_ARE_EQUAL(1u, images.FindImage(30)->currentFrame);
+            VERIFY_IS_FALSE(images.TickAnimations(1179));
+            VERIFY_IS_TRUE(images.TickAnimations(1180));
+            VERIFY_ARE_EQUAL(2u, images.FindImage(30)->currentFrame);
+            VERIFY_IS_TRUE(images.HasRunningAnimations());
+            // Stopping shows the root frame again and stops the clock.
+            SendApc(L"a=a,i=30,s=1,q=2");
+            VERIFY_ARE_EQUAL(1u, images.FindImage(30)->currentFrame);
+            VERIFY_IS_FALSE(images.HasRunningAnimations());
+            VERIFY_IS_FALSE(images.TickAnimations(100000));
+        }
+        TEST_METHOD(TerminalDrivenPlaybackCountsLoops)
+        {
+            // Two frames: the root with no gap, frame 2 with 10 ms.
+            SendApc(L"a=t,f=24,s=1,v=1,i=31,q=2;/wAA");
+            SendApc(L"a=f,i=31,r=2,z=10;AAD/");
+            SendApc(L"a=a,i=31,s=3,v=3,q=2");
+            auto& images = _buffer->GetKittyImages();
+            auto now = 1000u;
+            VERIFY_IS_FALSE(images.TickAnimations(now));
+            // Root gap defaults to 40 ms, frame 2 carries 10 ms, so the
+            // transitions land at 1040, 1080, 1090, 1130, ... and v=3
+            // stops after three full passes back on the root frame.
+            VERIFY_IS_FALSE(images.TickAnimations(1000));
+            VERIFY_IS_TRUE(images.TickAnimations(1040));
+            VERIFY_ARE_EQUAL(2u, images.FindImage(31)->currentFrame);
+            VERIFY_IS_TRUE(images.TickAnimations(1050));
+            VERIFY_ARE_EQUAL(1u, images.FindImage(31)->currentFrame);
+            VERIFY_IS_TRUE(images.HasRunningAnimations());
+            VERIFY_IS_TRUE(images.TickAnimations(1090));
+            VERIFY_ARE_EQUAL(2u, images.FindImage(31)->currentFrame);
+            VERIFY_IS_TRUE(images.TickAnimations(1100));
+            VERIFY_ARE_EQUAL(1u, images.FindImage(31)->currentFrame);
+            VERIFY_IS_TRUE(images.HasRunningAnimations());
+            VERIFY_IS_TRUE(images.TickAnimations(1140));
+            VERIFY_ARE_EQUAL(2u, images.FindImage(31)->currentFrame);
+            VERIFY_IS_TRUE(images.TickAnimations(1150));
+            VERIFY_ARE_EQUAL(1u, images.FindImage(31)->currentFrame);
+            VERIFY_IS_FALSE(images.HasRunningAnimations());
+        }
+
         TEST_METHOD(FrameOfUnknownImageFails)
         {
             SendApc(L"a=f,i=99;AAAA");
