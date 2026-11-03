@@ -2085,6 +2085,24 @@ void StateMachine::ProcessString(const std::wstring_view string)
 
         do
         {
+            if (_state == VTStates::ApcString)
+            {
+                // An APC body is one bulk payload, not a sequence: hand the
+                // whole printable run to the engine at once when it wants
+                // runs, and let actionable characters (the terminator among
+                // them) take the per-character path as before.
+                const auto beg = string.data() + i;
+                const auto len = string.size() - i;
+                const auto end = Microsoft::Console::Utils::FindActionableControlCharacter(beg, len);
+                const auto runLen = static_cast<size_t>(end - beg);
+                if (runLen > 0 && _engine->ActionApcRun({ beg, runLen }))
+                {
+                    _runSize += runLen;
+                    _processingLastCharacter = i + runLen >= string.size();
+                    i += runLen;
+                    continue;
+                }
+            }
             _runSize++;
             _processingLastCharacter = i + 1 >= string.size();
             // If we're processing characters individually, send it to the state machine.

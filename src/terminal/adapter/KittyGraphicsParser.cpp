@@ -176,6 +176,23 @@ KittyGraphicsParser::StringHandler KittyGraphicsParser::BeginSequence()
     return [this](const wchar_t ch) { return _handleChar(ch); };
 }
 
+void KittyGraphicsParser::HandleRun(const std::wstring_view run)
+{
+    if (_state == ParseState::Payload)
+    {
+        // A run inside the payload is pure base64: make room for all of it
+        // once, instead of growing through reallocations per character.
+        _cmd.payloadBase64.reserve(_cmd.payloadBase64.size() + run.size());
+    }
+    for (const auto ch : run)
+    {
+        if (!_handleChar(ch))
+        {
+            break;
+        }
+    }
+}
+
 bool KittyGraphicsParser::_handleChar(const wchar_t ch)
 {
     if (ch == AsciiChars::ESC)

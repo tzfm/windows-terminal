@@ -50,6 +50,8 @@ namespace Microsoft::Console::VirtualTerminal
 
         StringHandler ActionApcDispatch() override;
 
+        bool ActionApcRun(const std::wstring_view run) noexcept override;
+
         const ITermDispatch& Dispatch() const noexcept;
         ITermDispatch& Dispatch() noexcept;
 

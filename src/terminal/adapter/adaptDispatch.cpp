@@ -3962,6 +3962,18 @@ ITermDispatch::StringHandler AdaptDispatch::DefineKittyGraphics()
     return _kittyGraphicsParser->BeginSequence();
 }
 
+bool AdaptDispatch::HandleKittyGraphicsRun(const std::wstring_view run)
+{
+    // Only sequences a parser is already reading may be bulk-fed; anything
+    // else keeps the per-character path (which is what creates the parser).
+    if (!_api.IsKittyGraphicsProtocolEnabled() || !_kittyGraphicsParser)
+    {
+        return false;
+    }
+    _kittyGraphicsParser->HandleRun(run);
+    return true;
+}
+
 // Method Description:
 // - DECDLD - Downloads one or more characters of a dynamically redefinable
 //   character set (DRCS) with a specified pixel pattern. The pixel array is

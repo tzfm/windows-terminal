@@ -52,6 +52,12 @@ namespace Microsoft::Console::VirtualTerminal
         // Returns the character handler for one APC sequence.
         StringHandler BeginSequence();
 
+        // Bulk-feeds a run of the current sequence's characters. Same
+        // semantics as the per-character handler fed each in turn, minus a
+        // boundary crossing per character; payload capacity is reserved up
+        // front since runs are how megabyte frames arrive.
+        void HandleRun(const std::wstring_view run);
+
     private:
         // The parsed command, mirroring the control keys of the protocol.
         // A nullopt member means the key was absent.

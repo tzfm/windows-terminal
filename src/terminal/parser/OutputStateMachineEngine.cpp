@@ -954,6 +954,20 @@ IStateMachineEngine::StringHandler OutputStateMachineEngine::ActionApcDispatch()
 }
 
 // Routine Description:
+// - Bulk consumption of an APC run, when a Kitty Graphics parser is
+//   attached to the current sequence. Returning false falls the state
+//   machine back to the per-character handler.
+bool OutputStateMachineEngine::ActionApcRun(const std::wstring_view run) noexcept
+{
+    try
+    {
+        return _dispatch->HandleKittyGraphicsRun(run);
+    }
+    CATCH_LOG();
+    return false;
+}
+
+// Routine Description:
 // - OSC 4 ; c ; spec ST
 //      c: the index of the ansi color table
 //      spec: The colors are specified by name or RGB specification as per XParseColor

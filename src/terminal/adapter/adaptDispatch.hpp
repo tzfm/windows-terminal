@@ -171,6 +171,8 @@ namespace Microsoft::Console::VirtualTerminal
 
         StringHandler DefineKittyGraphics() override; // Kitty Graphics Protocol (APC)
 
+        bool HandleKittyGraphicsRun(const std::wstring_view run) override;
+
         StringHandler DownloadDRCS(const VTInt fontNumber,
                                    const VTParameter startChar,
                                    const DispatchTypes::DrcsEraseControl eraseControl,

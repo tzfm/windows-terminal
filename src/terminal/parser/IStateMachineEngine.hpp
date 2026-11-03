@@ -54,6 +54,17 @@ namespace Microsoft::Console::VirtualTerminal
         // the content is discarded exactly as it always has been.
         virtual StringHandler ActionApcDispatch() = 0;
 
+        // Optional bulk twin of the handler above: consumes a whole run of
+        // APC content characters in one call. Returns false when the engine
+        // would rather have the characters one at a time, which is the
+        // default. Graphics payloads are megabytes of base64, and engines
+        // that parse them want this to avoid a boundary crossing and a
+        // virtual call per character.
+        virtual bool ActionApcRun(const std::wstring_view /*run*/) noexcept
+        {
+            return false;
+        }
+
     protected:
         IStateMachineEngine() = default;
     };

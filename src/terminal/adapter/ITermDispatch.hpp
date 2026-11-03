@@ -171,6 +171,15 @@ public:
 
     virtual StringHandler DefineKittyGraphics() = 0; // Kitty Graphics Protocol (APC)
 
+    // Bulk twin of the handler above: consumes a run of APC content in one
+    // call when a Kitty Graphics parser is attached. The default (no
+    // parser) returns false so the state machine keeps the per-character
+    // handler, and implementations without Kitty are unaffected.
+    virtual bool HandleKittyGraphicsRun(const std::wstring_view /*run*/)
+    {
+        return false;
+    }
+
     virtual StringHandler DownloadDRCS(const VTInt fontNumber,
                                        const VTParameter startChar,
                                        const DispatchTypes::DrcsEraseControl eraseControl,
