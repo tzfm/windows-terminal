@@ -465,8 +465,8 @@ namespace Microsoft::Console::VirtualTerminal
             VERIFY_ARE_EQUAL(1, placements[0].rows);
 
             auto& row = _buffer->GetMutableRowByOffset(0);
-            _buffer->GetKittyImages().ComposeRow(*_buffer, row, 0, { 10, 20 });
-            const auto slice = row.GetImageSlice();
+            const auto comp = _buffer->GetKittyImages().ComposeRow(*_buffer, row, 0, { 10, 20 });
+            const auto slice = comp ? comp->above.get() : nullptr;
             VERIFY_IS_NOT_NULL(slice);
             VerifyPixel(RGBQUAD{ 0, 0, 0, 255 }, slice->Pixels()[0]);
             VerifyPixel(RGBQUAD{ 0, 0, 0, 255 }, slice->Pixels()[199]);
@@ -484,8 +484,8 @@ namespace Microsoft::Console::VirtualTerminal
             VERIFY_ARE_EQUAL(2, placements[0].rows);
 
             auto& row = _buffer->GetMutableRowByOffset(0);
-            _buffer->GetKittyImages().ComposeRow(*_buffer, row, 0, { 10, 20 });
-            VERIFY_IS_NOT_NULL(row.GetImageSlice());
+            const auto comp = _buffer->GetKittyImages().ComposeRow(*_buffer, row, 0, { 10, 20 });
+            VERIFY_IS_NOT_NULL(comp ? comp->above.get() : nullptr);
         }
 
         TEST_METHOD(UpscalePreservesConstantChannels)
@@ -528,8 +528,8 @@ namespace Microsoft::Console::VirtualTerminal
             for (auto rowY = 0; rowY < 20; ++rowY)
             {
                 auto& row = _buffer->GetMutableRowByOffset(rowY);
-                _buffer->GetKittyImages().ComposeRow(*_buffer, row, rowY, cellSize);
-                const auto slice = row.GetImageSlice();
+                const auto comp = _buffer->GetKittyImages().ComposeRow(*_buffer, row, rowY, cellSize);
+                const auto slice = comp ? comp->above.get() : nullptr;
                 if (!slice)
                 {
                     continue;
@@ -560,9 +560,9 @@ namespace Microsoft::Console::VirtualTerminal
             const auto payload = std::wstring(800, L'A');
             SendApc(fmt::format(FMT_COMPILE(L"a=T,f=24,s=10,v=20,i=5,z=-1,p=1;{}"), payload));
             auto& row = _buffer->GetMutableRowByOffset(0);
-            _buffer->GetKittyImages().ComposeRow(*_buffer, row, 0, { 10, 20 });
-            VERIFY_IS_NULL(row.GetImageSlice(ImageSliceLayer::AboveText));
-            const auto below = row.GetImageSlice(ImageSliceLayer::BelowText);
+            const auto comp = _buffer->GetKittyImages().ComposeRow(*_buffer, row, 0, { 10, 20 });
+            VERIFY_IS_NULL(comp ? comp->above.get() : nullptr);
+            const auto below = comp ? comp->below.get() : nullptr;
             VERIFY_IS_NOT_NULL(below);
             VerifyPixel(RGBQUAD{ 0, 0, 0, 255 }, below->Pixels()[0]);
 
@@ -572,12 +572,12 @@ namespace Microsoft::Console::VirtualTerminal
             // be back to no image content on either layer.
             SendApc(L"a=p,i=5,p=1,z=0,C=1");
             auto& rowOne = _buffer->GetMutableRowByOffset(1);
-            _buffer->GetKittyImages().ComposeRow(*_buffer, rowOne, 1, { 10, 20 });
-            VERIFY_IS_NOT_NULL(rowOne.GetImageSlice(ImageSliceLayer::AboveText));
-            VERIFY_IS_NULL(rowOne.GetImageSlice(ImageSliceLayer::BelowText));
-            _buffer->GetKittyImages().ComposeRow(*_buffer, row, 0, { 10, 20 });
-            VERIFY_IS_NULL(row.GetImageSlice(ImageSliceLayer::AboveText));
-            VERIFY_IS_NULL(row.GetImageSlice(ImageSliceLayer::BelowText));
+            const auto compOne = _buffer->GetKittyImages().ComposeRow(*_buffer, rowOne, 1, { 10, 20 });
+            VERIFY_IS_NOT_NULL(compOne ? compOne->above.get() : nullptr);
+            VERIFY_IS_NULL(compOne ? compOne->below.get() : nullptr);
+            const auto compAgain = _buffer->GetKittyImages().ComposeRow(*_buffer, row, 0, { 10, 20 });
+            VERIFY_IS_NULL(compAgain ? compAgain->above.get() : nullptr);
+            VERIFY_IS_NULL(compAgain ? compAgain->below.get() : nullptr);
         }
 
         TEST_METHOD(PlacementAckIncludesPlacementId)
@@ -717,8 +717,8 @@ namespace Microsoft::Console::VirtualTerminal
             for (auto rowY : { 0, 1, 3 })
             {
                 auto& row = _buffer->GetMutableRowByOffset(rowY);
-                _buffer->GetKittyImages().ComposeRow(*_buffer, row, rowY, { 10, 20 });
-                const auto slice = row.GetImageSlice();
+                const auto comp = _buffer->GetKittyImages().ComposeRow(*_buffer, row, rowY, { 10, 20 });
+                const auto slice = comp ? comp->above.get() : nullptr;
                 VERIFY_IS_NOT_NULL(slice);
                 const auto width = slice->PixelWidth();
                 VERIFY_ARE_EQUAL(20, width);
@@ -746,14 +746,14 @@ namespace Microsoft::Console::VirtualTerminal
             Send(L"\x1b[38;5;42;58;5;7m\xDB3B\xDEEE\x0305\x0305\xDB3B\xDEEE\x0305\x030D\xDB3B\xDEEE\x030D\x0305\xDB3B\xDEEE\x030D\x030D\x1b[39;59m");
             Send(L"\r\n\x1b[38;5;42;58;5;8m\xDB3B\xDEEE\x0305\x0305\xDB3B\xDEEE\x0305\x030D\x1b[39;59m");
             auto& rowA = _buffer->GetMutableRowByOffset(0);
-            _buffer->GetKittyImages().ComposeRow(*_buffer, rowA, 0, { 10, 20 });
-            const auto sliceA = rowA.GetImageSlice();
+            const auto compA = _buffer->GetKittyImages().ComposeRow(*_buffer, rowA, 0, { 10, 20 });
+            const auto sliceA = compA ? compA->above.get() : nullptr;
             VERIFY_IS_NOT_NULL(sliceA);
             VERIFY_ARE_EQUAL(40, sliceA->PixelWidth());
 
             auto& rowB = _buffer->GetMutableRowByOffset(1);
-            _buffer->GetKittyImages().ComposeRow(*_buffer, rowB, 1, { 10, 20 });
-            const auto sliceB = rowB.GetImageSlice();
+            const auto compB = _buffer->GetKittyImages().ComposeRow(*_buffer, rowB, 1, { 10, 20 });
+            const auto sliceB = compB ? compB->above.get() : nullptr;
             VERIFY_IS_NOT_NULL(sliceB);
             VERIFY_ARE_EQUAL(20, sliceB->PixelWidth());
         }
@@ -769,8 +769,8 @@ namespace Microsoft::Console::VirtualTerminal
             SendApc(L"a=p,U=1,i=9,c=1,r=9");
             Send(L"\x1b[38;5;9m\xDB3B\xDEEE\x0346\x0305\x1b[39m\r\n");
             auto& row = _buffer->GetMutableRowByOffset(0);
-            _buffer->GetKittyImages().ComposeRow(*_buffer, row, 0, { 10, 20 });
-            const auto slice = row.GetImageSlice();
+            const auto comp = _buffer->GetKittyImages().ComposeRow(*_buffer, row, 0, { 10, 20 });
+            const auto slice = comp ? comp->above.get() : nullptr;
             VERIFY_IS_NOT_NULL(slice);
             VERIFY_ARE_EQUAL(255, static_cast<int>(slice->Pixels()[10].rgbReserved));
         }
@@ -863,8 +863,8 @@ namespace Microsoft::Console::VirtualTerminal
             SendApc(fmt::format(FMT_COMPILE(L"a=T,f=24,s=88,v=12,i=5,q=2,C=1,z=-1,c=11,r=1,m=0;{}"), payload));
 
             auto& row = _buffer->GetMutableRowByOffset(0);
-            _buffer->GetKittyImages().ComposeRow(*_buffer, row, 0, { 10, 20 });
-            const auto slice = row.GetImageSlice(ImageSliceLayer::BelowText);
+            const auto comp = _buffer->GetKittyImages().ComposeRow(*_buffer, row, 0, { 10, 20 });
+            const auto slice = comp ? comp->below.get() : nullptr;
             VERIFY_IS_NOT_NULL(slice);
             VERIFY_ARE_EQUAL(110, slice->PixelWidth());
             // Every pixel row of the cell must be covered, top to bottom.

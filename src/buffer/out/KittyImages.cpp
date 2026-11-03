@@ -509,6 +509,7 @@ void KittyImages::OnCircularIncrement() noexcept
         return !placement.virtual_ && placement.y + placement.rows <= 0;
     });
     _composedRows.clear();
+    _rowCompositions.clear();
     _Bump();
 }
 
@@ -532,6 +533,7 @@ void KittyImages::OnScrollRows(const til::CoordType firstRow, const til::CoordTy
         return !placement.virtual_ && placement.y + placement.rows <= 0;
     });
     _composedRows.clear();
+    _rowCompositions.clear();
     _Bump();
 }
 
@@ -547,6 +549,7 @@ void KittyImages::OnResize(const til::CoordType height) noexcept
     _strips.clear();
     _stripBytes = 0;
     _composedRows.clear();
+    _rowCompositions.clear();
     _Bump();
 }
 
@@ -557,6 +560,7 @@ void KittyImages::Clear() noexcept
     _strips.clear();
     _stripBytes = 0;
     _composedRows.clear();
+    _rowCompositions.clear();
     _hasVirtualPlacements = false;
     _Bump();
 }
@@ -781,23 +785,15 @@ namespace
     };
 }
 
-void KittyImages::InvalidateRow(const til::CoordType rowY) noexcept
-{
-    if (_composedRows.erase(rowY))
-    {
-        _Bump();
-    }
-}
-
-void KittyImages::ComposeRow(const TextBuffer& buffer, ROW& row, const til::CoordType rowY, const til::size cellSize)
+const KittyImages::RowComposition* KittyImages::ComposeRow(const TextBuffer& buffer, const ROW& row, const til::CoordType rowY, const til::size cellSize)
 {
     if (!HasContent() && _composedRows.empty())
     {
-        return;
+        return nullptr;
     }
     if (cellSize.width <= 0 || cellSize.height <= 0)
     {
-        return;
+        return nullptr;
     }
 
     til::small_vector<Op, 4> ops;
@@ -910,28 +906,25 @@ void KittyImages::ComposeRow(const TextBuffer& buffer, ROW& row, const til::Coor
     const auto composed = _composedRows.find(rowY);
     if (composed != _composedRows.end() && composed->second == key)
     {
-        return;
+        const auto cached = _rowCompositions.find(rowY);
+        if (cached != _rowCompositions.end())
+        {
+            return &cached->second;
+        }
+        // A row composed before the map was capped holds no pixels now.
+        return nullptr;
     }
 
     if (ops.empty())
     {
-        // Nothing to show anymore. If we composed this row before, clear
-        // the pixels we wrote. This can also clear Sixel pixels on the
-        // same row; mixing Sixel and Kitty images on one row is not
-        // supported.
+        // Nothing to show anymore. Drop the row's owned pixels; the buffer
+        // rows were never touched, so nothing else needs cleanup.
         if (composed != _composedRows.end())
         {
-            ImageSlice::EraseCells(row, 0, row.size());
             _composedRows.erase(composed);
+            _rowCompositions.erase(rowY);
         }
-        return;
-    }
-
-    // The composed pixels changed. Drop whatever we composed before,
-    // including a layer that no longer has any placements, and start over.
-    if (composed != _composedRows.end())
-    {
-        ImageSlice::EraseCells(row, 0, row.size());
+        return nullptr;
     }
 
     // Draw in (z, image id, placement id) order so overlaps behave
@@ -951,6 +944,9 @@ void KittyImages::ComposeRow(const TextBuffer& buffer, ROW& row, const til::Coor
         return a.placement->placementId < b.placement->placementId;
     });
 
+    auto& entry = _rowCompositions[rowY];
+    entry.below.reset();
+    entry.above.reset();
     ImageSlice* slices[2] = {};
     const auto rowWidth = row.size();
     for (const auto& op : ops)
@@ -959,12 +955,12 @@ void KittyImages::ComposeRow(const TextBuffer& buffer, ROW& row, const til::Coor
         auto& slice = slices[below ? 1 : 0];
         if (!slice)
         {
-            const auto layer = below ? ImageSliceLayer::BelowText : ImageSliceLayer::AboveText;
-            slice = row.GetMutableImageSlice(layer);
-            if (!slice || slice->CellSize() != cellSize)
+            auto& slot = below ? entry.below : entry.above;
+            if (!slot || slot->CellSize() != cellSize)
             {
-                slice = row.SetImageSlice(layer, std::make_unique<ImageSlice>(cellSize));
+                slot = std::make_unique<ImageSlice>(cellSize);
             }
+            slice = slot.get();
         }
         const auto columnBegin = std::max<til::CoordType>(0, op.columnBegin);
         const auto columnEnd = std::min<til::CoordType>(rowWidth, op.columnEnd);
@@ -1046,6 +1042,9 @@ void KittyImages::ComposeRow(const TextBuffer& buffer, ROW& row, const til::Coor
     if (_composedRows.size() >= MaxComposedRowEntries)
     {
         _composedRows.clear();
+        _rowCompositions.clear();
+        _rowCompositions.clear();
     }
     _composedRows[rowY] = key;
+    return &entry;
 }

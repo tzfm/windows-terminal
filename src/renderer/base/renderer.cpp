@@ -1158,12 +1158,12 @@ void Renderer::_PaintBufferOutput(_In_ IRenderEngine* const pEngine)
             // of the backing buffer to fill in line 1 of the screen.
             const auto screenPosition = bufferLine.Origin() - til::point{ 0, _viewport.Top() };
 
-            // Bring any Kitty Graphics placements of this row into its image
-            // slices. Placements with a negative z-index are painted below
+            // Bring any Kitty Graphics placements of this row into composed
+            // pixels. They never enter the buffer rows, so the text below
+            // and the Sixel pixels stay untouched. Negative z paints below
             // the text, the rest on top of it.
-            auto& mutableRow = const_cast<ROW&>(r);
-            buffer.GetKittyImages().ComposeRow(buffer, mutableRow, row, _pData->GetFontInfo().GetCellSizeInPhysicalPx());
-            const auto imageSliceBelow = mutableRow.GetImageSlice(ImageSliceLayer::BelowText);
+            const auto kittyRow = buffer.GetKittyImages().ComposeRow(buffer, r, row, _pData->GetFontInfo().GetCellSizeInPhysicalPx());
+            const ImageSlice* imageSliceBelow = kittyRow ? kittyRow->below.get() : nullptr;
             if (imageSliceBelow) [[unlikely]]
             {
                 LOG_IF_FAILED(pEngine->PaintImageSlice(*imageSliceBelow, screenPosition.y, _viewport.Left(), ImageSliceLayer::BelowText));
@@ -1177,10 +1177,13 @@ void Renderer::_PaintBufferOutput(_In_ IRenderEngine* const pEngine)
 
             _PaintBufferOutputHelper(pEngine, it, screenPosition);
 
-            const auto imageSlice = mutableRow.GetImageSlice();
-            if (imageSlice) [[unlikely]]
+            // Sixel pixels live in the row itself; kitty pixels come from
+            // the composition above.
+            const auto imageSlice = r.GetImageSlice();
+            const ImageSlice* imageSliceAbove = imageSlice ? imageSlice : (kittyRow ? kittyRow->above.get() : nullptr);
+            if (imageSliceAbove) [[unlikely]]
             {
-                LOG_IF_FAILED(pEngine->PaintImageSlice(*imageSlice, screenPosition.y, _viewport.Left(), ImageSliceLayer::AboveText));
+                LOG_IF_FAILED(pEngine->PaintImageSlice(*imageSliceAbove, screenPosition.y, _viewport.Left(), ImageSliceLayer::AboveText));
             }
         }
     }

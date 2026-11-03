@@ -19,6 +19,8 @@ Abstract:
 #pragma once
 
 #include "til.h"
+#include "ImageSlice.hpp"
+#include <memory>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -162,17 +164,23 @@ public:
     // coordinates into range.
     void OnResize(til::CoordType height) noexcept;
 
-    // Composes the pixels of everything visible on the given row into the
-    // row's ImageSlice (creating it if needed). Cheap when nothing changed
-    // since the previous call. rowY is the row's offset within the buffer,
-    // cellSize the current font's cell size in pixels.
-    void ComposeRow(const TextBuffer& buffer, ROW& row, til::CoordType rowY, til::size cellSize);
-
-    // Drops a row's cached composition so the next paint recomposes it.
-    // Called when text is written over a row that carries image pixels.
-    void InvalidateRow(til::CoordType rowY) noexcept;
-
     void Clear() noexcept;
+
+    // The composed pixels of one row, owned by the placement store itself:
+    // a row's slices below and above the text. Both are null when the row
+    // carries no image content. Valid until the next composition change
+    // (bumped generation); the renderer consumes it within one paint.
+    struct RowComposition
+    {
+        std::unique_ptr<ImageSlice> below;
+        std::unique_ptr<ImageSlice> above;
+    };
+
+    // Composes the pixels of everything visible on the given row into
+    // freshly owned slices, cheap when nothing changed since the previous
+    // call. Kitty pixels never enter the buffer rows: text writes and
+    // Sixel erase logic can therefore not interact with them at all.
+    const RowComposition* ComposeRow(const TextBuffer& buffer, const ROW& row, til::CoordType rowY, til::size cellSize);
 
 private:
     struct StripKey
@@ -212,6 +220,10 @@ private:
     // skip redundant recompositions. Rows with no entry were never
     // composed by us and need no cleanup.
     std::unordered_map<til::CoordType, uint64_t> _composedRows;
+    // The composed pixels themselves, owned here and never entering the
+    // buffer rows, so text writes and Sixel erasure cannot touch them.
+    // Element pointers stay valid across inserts (node based map).
+    std::unordered_map<til::CoordType, RowComposition> _rowCompositions;
     uint64_t _generation = 1;
     uint64_t _nextImageGen = 1;
     bool _hasVirtualPlacements = false; // gates the per-row text scan
